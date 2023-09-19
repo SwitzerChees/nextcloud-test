@@ -1,0 +1,165 @@
+# Define the EXACT nextcloud image
+image:
+  repository: nextcloud
+  tag: 27.0.2-fpm
+  pullPolicy: IfNotPresent
+
+# Number of replicas to be deployed
+replicaCount: 1
+
+# Resources to be allocated to a single pod
+resources:
+  requests:
+    cpu: 2
+    memory: 4Gi
+  limits:
+    cpu: 4
+    memory: 4Gi
+
+# Enable persistence using PVC
+persistence:
+  enabled: true
+  size: 16Gi
+  nextcloudData:
+    enabled: true
+    size: 1024Gi # Can be extended later
+
+# Define the affinity rules
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/instance
+              operator: In
+              values:
+                - nextcloud
+        topologyKey: kubernetes.io/hostname
+
+# Main nextcloud configuration
+nextcloud:
+  host: instance01.leny.ch
+  phpConfigs:
+    www.conf: |-
+      [www]
+      user = www-data
+      group = www-data
+      listen = 127.0.0.1:9000
+      pm = dynamic
+      pm.max_children = 128
+      pm.start_servers = 32
+      pm.min_spare_servers = 32
+      pm.max_spare_servers = 96
+  strategy:
+    type: Recreate
+  extraEnv:
+    - name: REDIS_HOST_PASSWORD
+      value: <SECRET>
+
+# Deactivate internal sqlite database
+internalDatabase:
+  enabled: false
+
+# Use external postgresql database
+externalDatabase:
+  enabled: true
+  type: postgresql
+  host: postgresql.instance01.svc.cluster.local
+  user: postgres
+  password: <SECRET>
+  database: nextcloud
+
+# Configure nginx sidecar for FPM
+nginx:
+  enabled: true
+  image:
+    repository: nginx
+    tag: alpine
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 0.375
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 256Mi
+  updateStrategy:
+    type: Recreate
+
+## PostgreSQL chart configuration
+## for more options see https://github.com/bitnami/charts/tree/main/bitnami/postgresql
+postgresql:
+  enabled: true
+  auth:
+    username: nextcloud
+    password: changeme
+    database: nextcloud
+  primary:
+    persistence:
+      enabled: true
+      size: 16Gi
+    resources:
+      requests:
+        cpu: 2
+        memory: 4Gi
+      limits:
+        cpu: 4
+        memory: 4Gi
+    updateStrategy:
+      type: Recreate
+
+## Redis chart configuration
+## for more options see https://github.com/bitnami/charts/tree/main/bitnami/redis
+redis:
+  enabled: true
+  architecture: "standalone"
+  commonConfiguration: |-
+    # Disable appendonly
+    appendonly no
+  auth:
+    enabled: true
+    password: <SECRET>
+  master:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 1
+        memory: 2Gi
+      limits:
+        cpu: 2
+        memory: 2Gi
+    updateStrategy:
+      type: Recreate
+
+## Prometheus Exporter / Metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+  resources:
+    requests:
+      cpu: 0.25
+      memory: 256Mi
+    limits:
+      cpu: 0.5
+      memory: 256Mi
+  updateStrategy:
+    type: Recreate
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  annotations:
+    nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
+    acme.cert-manager.io/http01-edit-in-place: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: 32000m
+    nginx.ingress.kubernetes.io/client-header-buffer-size: 400m
+    nginx.ingress.kubernetes.io/client-body-buffer-size: 400m
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    kubernetes.io/ingress.class: nginx
+    kubernetes.io/tls-acme: "true"
+  tls:
+    - secretName: instance01.leny.ch-tls
+      hosts:
+        - instance01.leny.ch
